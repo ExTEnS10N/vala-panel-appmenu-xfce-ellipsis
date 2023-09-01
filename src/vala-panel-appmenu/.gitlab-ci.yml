@@ -1,0 +1,95 @@
+stages:
+  - build
+  - release
+before_script:
+  - mkdir -p _ccache
+  - export CCACHE_BASEDIR=${PWD}
+  - export CCACHE_DIR=${PWD}/_ccache
+
+cache:
+  paths:
+    - _ccache/
+
+build-applet-alpine:
+  image: alpine:edge
+  stage: build
+  script:
+   - apk add --no-cache python3 gtk+3.0-dev vala meson ninja xz libwnck3-dev build-base git
+   - git clone https://gitlab.com/vala-panel-project/vala-panel.git
+   - meson --prefix=/usr vp-build vala-panel && meson install -C vp-build && rm -rf vala-panel && rm -rf vp-build
+   - meson --prefix=/usr -Dregistrar=disabled -Djayatana=disabled -Dappmenu-gtk-module=disabled build
+   - meson compile -C build
+   - meson install -C build --no-rebuild
+   - meson dist -C build --no-tests
+  artifacts:
+    paths:
+    - "build/meson-dist/vala-panel-appmenu*.tar.xz"
+    expire_in: 1 week
+
+build-gtk-module-main:
+  image: alpine:edge
+  stage: build
+  script:
+   - apk add --no-cache python3 gtk+3.0-dev gtk+2.0-dev xz meson ninja libwnck3-dev build-base git
+   - export VERSION=$(git describe --abbrev=0)
+   - meson --prefix=/usr build subprojects/appmenu-gtk-module
+   - meson compile -C build
+   - meson install -C build --no-rebuild
+   - cd subprojects && tar -cJf appmenu-gtk-module-$VERSION.tar.xz appmenu-gtk-module
+  artifacts:
+    paths:
+    - "subprojects/appmenu-gtk-module*.tar.xz"
+    expire_in: 1 week
+
+
+build-registrar-main:
+  image: alpine:edge
+  stage: build
+  script:
+   - apk add --no-cache python3 glib-dev meson xz build-base git
+   - export VERSION=$(git describe --abbrev=0)
+   - meson --prefix=/usr --libexecdir=lib build subprojects/registrar
+   - meson compile -C build
+   - meson install -C build --no-rebuild
+   - cd subprojects && tar -cJf appmenu-registrar-$VERSION.tar.xz registrar
+  artifacts:
+    paths:
+    - "subprojects/appmenu-registrar*.tar.xz"
+    expire_in: 1 week
+
+
+build-jayatana-main:
+  image: archlinux:base
+  stage: build
+  script:
+   - pacman -Syy --noconfirm glib2 libdbusmenu-glib cmake base-devel ninja libxkbcommon jdk11-openjdk git libx11
+   - git clone https://gitlab.com/vala-panel-project/cmake-vala.git
+   - cd cmake-vala && cmake . -DCMAKE_INSTALL_PREFIX=/usr -GNinja && ninja install && cd .. && rm -rf cmake-vala
+   - cd subprojects/jayatana
+   - mkdir build && cd build && cmake .. -DCMAKE_INSTALL_PREFIX=/usr -GNinja
+   - ninja
+   - ninja install
+   - ninja dist
+  artifacts:
+    paths:
+    - "subprojects/jayatana/build/jayatana*.tar.xz"
+    expire_in: 1 week
+
+
+release-main:
+  image: alpine:edge
+  stage: release
+  script:
+    - apk add --no-cache python3 py3-pip
+    - pip3 install gitlab_release
+    - python3 -m gitlab_release --link-in-desc --link-artifact *
+  artifacts:
+    paths:
+      # Must include files passed to gitlab_release
+    - "subprojects/appmenu-gtk-module*.tar.xz"
+    - "subprojects/appmenu-registrar*.tar.xz"
+    - "subprojects/jayatana/build/jayatana*.tar.xz"
+    - "build/meson-dist/vala-panel-appmenu*.tar.xz"
+  only:
+    - tags
+
